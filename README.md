@@ -1,73 +1,297 @@
-# React + TypeScript + Vite
+# TSL Graph Inspector postMessage Protocol
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This document defines the iframe integration contract between a host app and the TSL Graph standalone editor.
 
-Currently, two official plugins are available:
+## Scope
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Transport: `window.postMessage`
+- Direction: Host <-> Editor iframe
+- Current command surface:
+  - `tsl:command:set-root-material`
+  - `tsl:command:get-graph`
+  - `tsl:command:get-code`
+  - `tsl:command:get-uniform-schema`
+  - `tsl:command:set-uniform-values`
+- Persistence bridge:
+  - `tsl:request:load` / `tsl:response:load`
+  - `tsl:request:save` / `tsl:response:save`
 
-## React Compiler
+## Envelope
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+All messages use the same envelope:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```ts
+type Envelope<T = unknown> = {
+  source: string;
+  type: string;
+  requestId?: string;
+  payload?: T;
+  error?: string;
+};
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Source values
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- Host messages: `source: "tsl-graph-host"`
+- Editor messages: `source: "tsl-graph-editor"`
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Message catalog
+
+### Editor -> Host
+
+1. `tsl:event:ready`
+- Purpose: Editor iframe is mounted and command channel is ready.
+- Payload:
+
+```ts
+{
+  version: 1;
+  enabledGraphs: Array<"material" | "postprocessing">;
+}
+```
+
+2. `tsl:event:graph-changed`
+- Purpose: Lightweight invalidation signal for graph edits.
+- Payload:
+
+```ts
+{
+  revision: number; // monotonically increasing within the session
+}
+```
+
+3. `tsl:event:uniforms-changed`
+- Purpose: Notify host that uniform values/schema changed.
+- Payload:
+
+```ts
+{
+  uniforms: Array<{
+    scope: "node" | "global";
+    id: string;
+    name: string;
+    uniformType: "float" | "int" | "bool" | "vec2" | "vec3" | "vec4" | "color";
+    value: unknown;
+  }>;
+}
+```
+
+4. `tsl:request:load`
+- Purpose: Ask host for initial graph data.
+- Payload:
+
+```ts
+{
+  ref: { docId: string };
+}
+```
+
+5. `tsl:request:save`
+- Purpose: Ask host to persist current graph snapshot.
+- Payload:
+
+```ts
+{
+  ref: { docId: string };
+  graphData: unknown;
+  reason: "autosave" | "manual";
+}
+```
+
+### Host -> Editor
+
+1. `tsl:response:load`
+- Purpose: Reply to `tsl:request:load` (same `requestId`).
+- Payload:
+
+```ts
+// return null if no saved graph exists
+{
+  graphData: unknown;
+  projectName?: string;
+} | null
+```
+
+2. `tsl:response:save`
+- Purpose: Reply to `tsl:request:save` (same `requestId`).
+- Payload:
+
+```ts
+{
+  ok: true;
+}
+```
+
+3. `tsl:command:set-root-material`
+- Purpose: Set and lock the root material node type.
+- Payload:
+
+```ts
+{
+  materialType: "material/node" | "material/standard" | "material/basic" | "material/physical" | "material/phong" | "material/sprite";
+}
+```
+
+4. `tsl:command:get-graph`
+- Purpose: Pull full graph JSON on demand.
+- Payload: optional/unused.
+
+5. `tsl:command:get-code`
+- Purpose: Pull compiled code on demand.
+- Payload: optional/unused.
+- `material.code` is returned as a snippet without material declaration/assignment boilerplate.
+
+6. `tsl:command:get-uniform-schema`
+- Purpose: Pull current uniform schema/values on demand.
+- Payload: optional/unused.
+
+7. `tsl:command:set-uniform-values`
+- Purpose: Patch one or more uniforms by id/scope.
+- Payload:
+
+```ts
+{
+  updates: Array<{
+    scope: "node" | "global";
+    id: string;
+    value: unknown;
+  }>;
+}
+```
+
+Note:
+- Node uniform updates are applied against the material root graph. If material root is not active, those node updates are rejected with a reason.
+
+### Editor command responses
+
+1. `tsl:response:set-root-material`
+
+```ts
+{
+  ok: true;
+  materialType: "material/node" | "material/standard" | "material/basic" | "material/physical" | "material/phong" | "material/sprite";
+}
+```
+
+2. `tsl:response:get-graph`
+
+```ts
+{
+  graphData: unknown;
+}
+```
+
+3. `tsl:response:get-code`
+
+```ts
+{
+  enabledGraphs: Array<"material" | "postprocessing">;
+  material: {
+    code: string | null;
+    error: string | null;
+  };
+  postprocessing: {
+    code: string | null;
+    functionName: string | null;
+    error: string | null;
+  };
+}
+```
+
+Note:
+- `material.code` excludes the `const material = new ...` block and `material.* = ...` assignments.
+- Post-processing code remains separate in `postprocessing.code`.
+
+4. `tsl:response:get-uniform-schema`
+
+```ts
+{
+  uniforms: Array<{
+    scope: "node" | "global";
+    id: string;
+    name: string;
+    uniformType: "float" | "int" | "bool" | "vec2" | "vec3" | "vec4" | "color";
+    value: unknown;
+  }>;
+}
+```
+
+5. `tsl:response:set-uniform-values`
+
+```ts
+{
+  ok: boolean;
+  uniforms: Array<{
+    scope: "node" | "global";
+    id: string;
+    name: string;
+    uniformType: "float" | "int" | "bool" | "vec2" | "vec3" | "vec4" | "color";
+    value: unknown;
+  }>;
+  rejected?: Array<{
+    scope: "node" | "global";
+    id: string;
+    reason: string;
+  }>;
+}
+```
+
+If any command fails, editor returns `error` on the envelope with the same `requestId`.
+
+## Lifecycle and timing
+
+Recommended host behavior:
+
+1. Create iframe URL:
+- `/editor/standalone?docId=<id>&graphs=material&targetOrigin=<host-origin>`
+
+2. Listen for messages and validate:
+- `event.origin`
+- `source`
+- `requestId` for command/response matching
+
+3. On `tsl:event:ready`:
+- Send `tsl:command:set-root-material` with the selected `materialType`.
+
+4. On `tsl:event:graph-changed`:
+- Debounce and call:
+  - `tsl:command:get-code` for live preview/application
+  - `tsl:command:get-graph` only when needed for persistence/export
+
+5. On `tsl:event:uniforms-changed`:
+- Sync inspector-side uniform UI using the provided uniform list.
+
+6. Respond to persistence requests:
+- `tsl:request:load` -> `tsl:response:load`
+- `tsl:request:save` -> `tsl:response:save`
+
+Important:
+- Do not assume strict ordering between `tsl:event:ready` and `tsl:request:load`. Handle both idempotently.
+
+## Why both `graph-changed` and `request:save` exist
+
+- `tsl:event:graph-changed` is a fast, side-effect-free invalidation signal.
+- `tsl:request:save` is a persistence transaction with autosave/manual policy and explicit ack.
+- They are intentionally separate.
+
+## Security and reliability guidance
+
+1. Always validate message origin in production.
+2. Avoid `targetOrigin="*"` outside local development.
+3. Use request timeouts for host-issued commands.
+4. Match responses by `requestId` only.
+5. Treat `graphData` as untrusted input; validate before storing.
+
+## Minimal host command helper
+
+```ts
+async function command<T = unknown>(type: string, payload?: unknown): Promise<T> {
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  iframe.contentWindow?.postMessage(
+    { source: "tsl-graph-host", type, requestId, payload },
+    editorOrigin
+  );
+  // resolve from message listener by matching requestId
+  // reject on timeout
+}
 ```
