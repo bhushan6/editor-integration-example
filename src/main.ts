@@ -50,7 +50,7 @@ type SetRootMaterialResponsePayload = { ok: true; materialType: MaterialType };
 
 type GetCodeResponsePayload = {
   enabledGraphs: GraphKind[];
-  material: { code: string | null; error: string | null };
+  material: { code: string | null; error: string | null; imports: Array<{ from: string; imports: string[] }> };
   postprocessing: { code: string | null; functionName: string | null; error: string | null };
 };
 
@@ -135,7 +135,7 @@ const selectedMaterialId = 'mat-123';
 const selectedMaterialClass: MaterialClass = 'MeshStandardNodeMaterial';
 
 const iframe = document.getElementById('tsl-graph-frame') as HTMLIFrameElement;
-const editorUrl = new URL('https://www.tsl-graph.xyz/editor/standalone');
+const editorUrl = new URL('http://localhost:3000/editor/standalone');
 editorUrl.searchParams.set('docId', selectedMaterialId);
 editorUrl.searchParams.set('graphs', 'material');
 editorUrl.searchParams.set('targetOrigin', '*');
@@ -436,6 +436,8 @@ window.addEventListener('message', async (event: MessageEvent) => {
 
     try {
       const schema = await getUniformSchema();
+      console.log({ schema });
+
       updateUniformCache(schema.uniforms);
       renderUniformUI(schema.uniforms);
     } catch (err) {
@@ -449,7 +451,7 @@ window.addEventListener('message', async (event: MessageEvent) => {
     const revision = msg.payload?.revision ?? -1;
     const code = await getCode();
     console.log('Graph changed', { revision, code });
-
+    console.log(code.material.imports);
     const el = document.getElementById('code');
     if (el) el.innerText = code.material.code ?? '';
     return;
@@ -457,6 +459,8 @@ window.addEventListener('message', async (event: MessageEvent) => {
 
   if (msg.type === 'tsl:event:uniforms-changed') {
     const uniforms = msg.payload?.uniforms ?? [];
+    console.log({ uniforms });
+
     updateUniformCache(uniforms);
     renderUniformUI(uniforms);
     return;

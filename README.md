@@ -1,6 +1,6 @@
 # TSL Graph Inspector postMessage Protocol
 
-This document defines the iframe integration contract between a host app and the TSL Graph standalone editor.
+This document defines the iframe integration contract between a host app (for example the three.js Inspector) and the TSL Graph standalone editor.
 
 ## Scope
 
@@ -139,7 +139,11 @@ type Envelope<T = unknown> = {
 5. `tsl:command:get-code`
 - Purpose: Pull compiled code on demand.
 - Payload: optional/unused.
-- `material.code` is returned as a snippet without material declaration/assignment boilerplate.
+- `material.code` is returned as an applier function: `tslGraph(material)`.
+- Material declaration (`const material = new ...`) is omitted.
+- `material.code` uses runtime uniform IDs and returns a uniform map.
+- Custom helpers from `@/lib/tsl-utils` used by the graph are inlined into `material.code`, so hosts do not need that module import.
+- Response includes imports grouped by module for material and postprocessing code.
 
 6. `tsl:command:get-uniform-schema`
 - Purpose: Pull current uniform schema/values on demand.
@@ -189,17 +193,25 @@ Note:
   material: {
     code: string | null;
     error: string | null;
+    imports: Array<{ from: string; imports: string[] }>;
   };
   postprocessing: {
     code: string | null;
     functionName: string | null;
     error: string | null;
+    imports: Array<{ from: string; imports: string[] }>;
   };
 }
 ```
 
 Note:
-- `material.code` excludes the `const material = new ...` block and `material.* = ...` assignments.
+- `material.code` excludes the `const material = new ...` block.
+- `material.code` keeps `material.* = ...` assignments inside `tslGraph(material)`.
+- `material.code` converts runtime helper calls into direct `uniform(...)` refs.
+- `material.imports` excludes material class symbols (e.g. `MeshStandardNodeMaterial`) because the host provides the material instance.
+- `tslGraph(material)` returns `{ uniforms }` where:
+  - `uniforms` is a map keyed by uniform id
+  - each value is the uniform reference
 - Post-processing code remains separate in `postprocessing.code`.
 
 4. `tsl:response:get-uniform-schema`
