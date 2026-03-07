@@ -135,7 +135,7 @@ const selectedMaterialId = 'mat-123';
 const selectedMaterialClass: MaterialClass = 'MeshStandardNodeMaterial';
 
 const iframe = document.getElementById('tsl-graph-frame') as HTMLIFrameElement;
-const editorUrl = new URL('http://localhost:3000/editor/standalone');
+const editorUrl = new URL('https://www.tsl-graph.xyz/editor/standalone');
 editorUrl.searchParams.set('docId', selectedMaterialId);
 editorUrl.searchParams.set('graphs', 'material');
 editorUrl.searchParams.set('targetOrigin', '*');
