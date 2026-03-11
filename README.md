@@ -7,14 +7,13 @@ This document defines the iframe integration contract between a host app (for ex
 - Transport: `window.postMessage`
 - Direction: Host <-> Editor iframe
 - Current command surface:
+  - `tsl:command:load`
   - `tsl:command:set-root-material`
   - `tsl:command:get-graph`
   - `tsl:command:get-code`
   - `tsl:command:get-uniform-schema`
   - `tsl:command:set-uniform-values`
-- Persistence bridge:
-  - `tsl:request:load` / `tsl:response:load`
-  - `tsl:request:save` / `tsl:response:save`
+- No built-in persistence bridge. Host decides when/how to persist.
 
 ## Envelope
 
@@ -76,53 +75,19 @@ type Envelope<T = unknown> = {
 }
 ```
 
-4. `tsl:request:load`
-- Purpose: Ask host for initial graph data.
-- Payload:
-
-```ts
-{
-  ref: { docId: string };
-}
-```
-
-5. `tsl:request:save`
-- Purpose: Ask host to persist current graph snapshot.
-- Payload:
-
-```ts
-{
-  ref: { docId: string };
-  graphData: unknown;
-  reason: "autosave" | "manual";
-}
-```
-
 ### Host -> Editor
 
-1. `tsl:response:load`
-- Purpose: Reply to `tsl:request:load` (same `requestId`).
+1. `tsl:command:load`
+- Purpose: Host-driven graph hydration/replacement.
 - Payload:
 
 ```ts
-// return null if no saved graph exists
 {
   graphData: unknown;
-  projectName?: string;
-} | null
-```
-
-2. `tsl:response:save`
-- Purpose: Reply to `tsl:request:save` (same `requestId`).
-- Payload:
-
-```ts
-{
-  ok: true;
 }
 ```
 
-3. `tsl:command:set-root-material`
+2. `tsl:command:set-root-material`
 - Purpose: Set and lock the root material node type.
 - Payload:
 
@@ -132,11 +97,11 @@ type Envelope<T = unknown> = {
 }
 ```
 
-4. `tsl:command:get-graph`
+3. `tsl:command:get-graph`
 - Purpose: Pull full graph JSON on demand.
 - Payload: optional/unused.
 
-5. `tsl:command:get-code`
+4. `tsl:command:get-code`
 - Purpose: Pull compiled code on demand.
 - Payload: optional/unused.
 - `material.code` is returned as an applier function: `tslGraph(material)`.
@@ -145,11 +110,11 @@ type Envelope<T = unknown> = {
 - Custom helpers from `@/lib/tsl-utils` used by the graph are inlined into `material.code`, so hosts do not need that module import.
 - Response includes imports grouped by module for material and postprocessing code.
 
-6. `tsl:command:get-uniform-schema`
+5. `tsl:command:get-uniform-schema`
 - Purpose: Pull current uniform schema/values on demand.
 - Payload: optional/unused.
 
-7. `tsl:command:set-uniform-values`
+6. `tsl:command:set-uniform-values`
 - Purpose: Patch one or more uniforms by id/scope.
 - Payload:
 
@@ -168,7 +133,15 @@ Note:
 
 ### Editor command responses
 
-1. `tsl:response:set-root-material`
+1. `tsl:response:load`
+
+```ts
+{
+  ok: true;
+}
+```
+
+2. `tsl:response:set-root-material`
 
 ```ts
 {
@@ -177,7 +150,7 @@ Note:
 }
 ```
 
-2. `tsl:response:get-graph`
+3. `tsl:response:get-graph`
 
 ```ts
 {
@@ -185,7 +158,7 @@ Note:
 }
 ```
 
-3. `tsl:response:get-code`
+4. `tsl:response:get-code`
 
 ```ts
 {
@@ -214,7 +187,7 @@ Note:
   - each value is the uniform reference
 - Post-processing code remains separate in `postprocessing.code`.
 
-4. `tsl:response:get-uniform-schema`
+5. `tsl:response:get-uniform-schema`
 
 ```ts
 {
@@ -228,7 +201,7 @@ Note:
 }
 ```
 
-5. `tsl:response:set-uniform-values`
+6. `tsl:response:set-uniform-values`
 
 ```ts
 {
@@ -263,28 +236,19 @@ Recommended host behavior:
 - `requestId` for command/response matching
 
 3. On `tsl:event:ready`:
-- Send `tsl:command:set-root-material` with the selected `materialType`.
+- Optionally send `tsl:command:set-root-material` with the selected `materialType`.
+- Editor can stay blank until host chooses a material/graph and sends `tsl:command:load`.
 
 4. On `tsl:event:graph-changed`:
 - Debounce and call:
   - `tsl:command:get-code` for live preview/application
-  - `tsl:command:get-graph` only when needed for persistence/export
+  - `tsl:command:get-graph` when needed for persistence/export
 
 5. On `tsl:event:uniforms-changed`:
 - Sync inspector-side uniform UI using the provided uniform list.
 
-6. Respond to persistence requests:
-- `tsl:request:load` -> `tsl:response:load`
-- `tsl:request:save` -> `tsl:response:save`
-
-Important:
-- Do not assume strict ordering between `tsl:event:ready` and `tsl:request:load`. Handle both idempotently.
-
-## Why both `graph-changed` and `request:save` exist
-
-- `tsl:event:graph-changed` is a fast, side-effect-free invalidation signal.
-- `tsl:request:save` is a persistence transaction with autosave/manual policy and explicit ack.
-- They are intentionally separate.
+6. Persist graph in host app:
+- Keep your own debounce policy and persist `graphData` pulled through `tsl:command:get-graph`.
 
 ## Security and reliability guidance
 
