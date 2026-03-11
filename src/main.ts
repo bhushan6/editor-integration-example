@@ -12,6 +12,7 @@ const HOST_SOURCE = 'tsl-graph-host' as const;
 const EDITOR_SOURCE = 'tsl-graph-editor' as const;
 
 type GraphKind = 'material' | 'postprocessing';
+
 type MaterialType =
   | 'material/node'
   | 'material/standard'
@@ -45,16 +46,31 @@ type UniformSchemaEntry = {
   value: UniformValue;
 };
 
+type LoadCommandPayload = { graphData: unknown };
+type LoadResponsePayload = { ok: true };
+
 type SetRootMaterialPayload = { materialType: MaterialType };
 type SetRootMaterialResponsePayload = { ok: true; materialType: MaterialType };
 
+type GetGraphResponsePayload = { graphData: unknown };
+
 type GetCodeResponsePayload = {
   enabledGraphs: GraphKind[];
-  material: { code: string | null; error: string | null; imports: Array<{ from: string; imports: string[] }> };
-  postprocessing: { code: string | null; functionName: string | null; error: string | null };
+  material: {
+    code: string | null;
+    error: string | null;
+    imports: Array<{ from: string; imports: string[] }>;
+  };
+  postprocessing: {
+    code: string | null;
+    functionName: string | null;
+    error: string | null;
+    imports: Array<{ from: string; imports: string[] }>;
+  };
 };
 
 type GetUniformSchemaResponsePayload = { uniforms: UniformSchemaEntry[] };
+
 type SetUniformValuesPayload = {
   updates: Array<{ scope: 'node' | 'global'; id: string; value: UniformValue }>;
 };
@@ -68,28 +84,20 @@ type EditorReadyPayload = { version: 1; enabledGraphs: GraphKind[] };
 type EditorGraphChangedPayload = { revision: number };
 type UniformsChangedPayload = { uniforms: UniformSchemaEntry[] };
 
-type LoadRequestPayload = { ref?: { docId?: string } };
-type SaveRequestPayload = {
-  ref?: { docId?: string };
-  graphData?: unknown;
-  reason?: 'autosave' | 'manual';
-};
-
-type LoadResponsePayload = { graphData: unknown; projectName?: string } | null;
-type SaveResponsePayload = { ok: true };
-
 type EditorMessage =
   | (Envelope<EditorReadyPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:event:ready' })
   | (Envelope<EditorGraphChangedPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:event:graph-changed' })
   | (Envelope<UniformsChangedPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:event:uniforms-changed' })
-  | (Envelope<LoadRequestPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:request:load' })
-  | (Envelope<SaveRequestPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:request:save' })
+  | (Envelope<LoadResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:load' })
+  | (Envelope<GetGraphResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:get-graph' })
   | (Envelope<GetCodeResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:get-code' })
   | (Envelope<SetRootMaterialResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:set-root-material' })
   | (Envelope<GetUniformSchemaResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:get-uniform-schema' })
   | (Envelope<SetUniformValuesResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:set-uniform-values' });
 
 type HostMessage =
+  | (Envelope<LoadCommandPayload> & { source: typeof HOST_SOURCE; type: 'tsl:command:load'; requestId: string })
+  | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-graph'; requestId: string })
   | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-code'; requestId: string })
   | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-uniform-schema'; requestId: string })
   | (Envelope<SetRootMaterialPayload> & {
@@ -101,23 +109,27 @@ type HostMessage =
     source: typeof HOST_SOURCE;
     type: 'tsl:command:set-uniform-values';
     requestId: string;
-  })
-  | (Envelope<LoadResponsePayload> & { source: typeof HOST_SOURCE; type: 'tsl:response:load'; requestId?: string })
-  | (Envelope<SaveResponsePayload> & { source: typeof HOST_SOURCE; type: 'tsl:response:save'; requestId?: string });
+  });
 
 type HostCommandType =
+  | 'tsl:command:load'
+  | 'tsl:command:get-graph'
   | 'tsl:command:get-code'
   | 'tsl:command:set-root-material'
   | 'tsl:command:get-uniform-schema'
   | 'tsl:command:set-uniform-values';
 
 type EditorResponseType =
+  | 'tsl:response:load'
+  | 'tsl:response:get-graph'
   | 'tsl:response:get-code'
   | 'tsl:response:set-root-material'
   | 'tsl:response:get-uniform-schema'
   | 'tsl:response:set-uniform-values';
 
 const RESPONSE_BY_COMMAND: Record<HostCommandType, EditorResponseType> = {
+  'tsl:command:load': 'tsl:response:load',
+  'tsl:command:get-graph': 'tsl:response:get-graph',
   'tsl:command:get-code': 'tsl:response:get-code',
   'tsl:command:set-root-material': 'tsl:response:set-root-material',
   'tsl:command:get-uniform-schema': 'tsl:response:get-uniform-schema',
@@ -134,17 +146,21 @@ type PendingRequest = {
 const selectedMaterialId = 'mat-123';
 const selectedMaterialClass: MaterialClass = 'MeshStandardNodeMaterial';
 
-const iframe = document.getElementById('tsl-graph-frame') as HTMLIFrameElement;
+const frameEl = document.getElementById('tsl-graph-frame');
+if (!(frameEl instanceof HTMLIFrameElement)) {
+  throw new Error('Missing #tsl-graph-frame iframe');
+}
+const iframe = frameEl;
+
 const editorUrl = new URL('https://www.tsl-graph.xyz/editor/standalone');
 editorUrl.searchParams.set('docId', selectedMaterialId);
 editorUrl.searchParams.set('graphs', 'material');
-editorUrl.searchParams.set('targetOrigin', '*');
+editorUrl.searchParams.set('targetOrigin', '*'); // dev only
 iframe.src = editorUrl.toString();
 
 const editorOrigin = new URL(iframe.src).origin;
 
 let isReady = false;
-let shouldLockRootMaterialOnReady = false;
 let resolveReady!: () => void;
 const editorReady = new Promise<void>((r) => (resolveReady = r));
 
@@ -248,6 +264,8 @@ function uniformKey(u: Pick<UniformSchemaEntry, 'scope' | 'id'>): string {
 
 let uniformsCache = new Map<string, UniformSchemaEntry>();
 
+async function command(type: 'tsl:command:load', payload: LoadCommandPayload): Promise<LoadResponsePayload>;
+async function command(type: 'tsl:command:get-graph'): Promise<GetGraphResponsePayload>;
 async function command(type: 'tsl:command:get-code'): Promise<GetCodeResponsePayload>;
 async function command(type: 'tsl:command:get-uniform-schema'): Promise<GetUniformSchemaResponsePayload>;
 async function command(
@@ -258,6 +276,7 @@ async function command(
   type: 'tsl:command:set-uniform-values',
   payload: SetUniformValuesPayload
 ): Promise<SetUniformValuesResponsePayload>;
+
 async function command(type: HostCommandType, payload?: unknown): Promise<unknown> {
   await editorReady;
   const requestId = makeRequestId();
@@ -273,16 +292,33 @@ async function command(type: HostCommandType, payload?: unknown): Promise<unknow
     pending.set(requestId, { expectedType, resolve, reject, timer });
 
     let message: HostMessage;
-    if (type === 'tsl:command:set-root-material') {
-      message = { source: HOST_SOURCE, type, requestId, payload: payload as SetRootMaterialPayload };
-    } else if (type === 'tsl:command:set-uniform-values') {
-      message = { source: HOST_SOURCE, type, requestId, payload: payload as SetUniformValuesPayload };
-    } else {
-      message = { source: HOST_SOURCE, type, requestId };
+    switch (type) {
+      case 'tsl:command:load':
+        message = { source: HOST_SOURCE, type, requestId, payload: payload as LoadCommandPayload };
+        break;
+      case 'tsl:command:set-root-material':
+        message = { source: HOST_SOURCE, type, requestId, payload: payload as SetRootMaterialPayload };
+        break;
+      case 'tsl:command:set-uniform-values':
+        message = { source: HOST_SOURCE, type, requestId, payload: payload as SetUniformValuesPayload };
+        break;
+      case 'tsl:command:get-graph':
+      case 'tsl:command:get-code':
+      case 'tsl:command:get-uniform-schema':
+        message = { source: HOST_SOURCE, type, requestId };
+        break;
     }
 
     postToEditor(message);
   });
+}
+
+async function commandLoad(payload: LoadCommandPayload): Promise<LoadResponsePayload> {
+  return command('tsl:command:load', payload);
+}
+
+async function getGraph(): Promise<GetGraphResponsePayload> {
+  return command('tsl:command:get-graph');
 }
 
 async function getCode(): Promise<GetCodeResponsePayload> {
@@ -307,15 +343,12 @@ function updateUniformCache(uniforms: UniformSchemaEntry[]) {
   uniformsCache = new Map(uniforms.map((u) => [uniformKey(u), u]));
 }
 
-async function applyRootMaterialLockIfNeeded() {
-  if (!shouldLockRootMaterialOnReady) return;
+async function applyRootMaterialLock() {
   try {
     await commandSetRootMaterial({ materialType: materialClassToType(selectedMaterialClass) });
     console.log('Root material locked:', selectedMaterialClass);
   } catch (err) {
     console.error('Failed to set root material:', err);
-  } finally {
-    shouldLockRootMaterialOnReady = false;
   }
 }
 
@@ -407,6 +440,54 @@ function renderUniformUI(uniforms: UniformSchemaEntry[]) {
   });
 }
 
+async function refreshCodePanel() {
+  try {
+    const code = await getCode();
+    console.log('Generated code:', code);
+
+    const el = document.getElementById('code');
+    if (el) el.innerText = code.material.code ?? '';
+  } catch (err) {
+    console.error('Failed to fetch code:', err);
+  }
+}
+
+const PERSIST_DEBOUNCE_MS = 500;
+let persistTimer: number | null = null;
+let persistInFlight = false;
+let persistQueued = false;
+
+async function persistGraphNow() {
+  if (persistInFlight) {
+    persistQueued = true;
+    return;
+  }
+
+  persistInFlight = true;
+  try {
+    const graph = await getGraph();
+    saveGraphToStorage(selectedMaterialId, graph.graphData);
+  } catch (err) {
+    console.error('Failed to persist graph:', err);
+  } finally {
+    persistInFlight = false;
+    if (persistQueued) {
+      persistQueued = false;
+      void persistGraphNow();
+    }
+  }
+}
+
+function schedulePersistGraph() {
+  if (persistTimer !== null) {
+    window.clearTimeout(persistTimer);
+  }
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    void persistGraphNow();
+  }, PERSIST_DEBOUNCE_MS);
+}
+
 window.addEventListener('message', async (event: MessageEvent) => {
   if (event.origin !== editorOrigin) return;
   if (!isEditorMessage(event.data)) return;
@@ -432,69 +513,50 @@ window.addEventListener('message', async (event: MessageEvent) => {
       resolveReady();
     }
 
-    await applyRootMaterialLockIfNeeded();
+    const saved = loadGraphFromStorage(selectedMaterialId);
+
+    try {
+      if (saved !== null) {
+        await commandLoad({ graphData: saved });
+        console.log('Loaded graph from localStorage:', selectedMaterialId);
+      } else {
+        // await applyRootMaterialLock();
+      }
+    } catch (err) {
+      console.error('Initial load/lock failed:', err);
+    }
 
     try {
       const schema = await getUniformSchema();
-      console.log({ schema });
-
       updateUniformCache(schema.uniforms);
       renderUniformUI(schema.uniforms);
     } catch (err) {
       console.error('Failed to fetch uniform schema:', err);
     }
 
+    await refreshCodePanel();
     return;
   }
 
   if (msg.type === 'tsl:event:graph-changed') {
     const revision = msg.payload?.revision ?? -1;
-    const code = await getCode();
-    console.log('Graph changed', { revision, code });
-    console.log(code.material.imports);
-    const el = document.getElementById('code');
-    if (el) el.innerText = code.material.code ?? '';
+    console.log('Graph changed revision:', revision);
+
+    await refreshCodePanel();
+    schedulePersistGraph();
     return;
   }
 
   if (msg.type === 'tsl:event:uniforms-changed') {
     const uniforms = msg.payload?.uniforms ?? [];
-    console.log({ uniforms });
-
     updateUniformCache(uniforms);
     renderUniformUI(uniforms);
     return;
   }
-
-  if (msg.type === 'tsl:request:load') {
-    const docId = msg.payload?.ref?.docId ?? selectedMaterialId;
-    const saved = loadGraphFromStorage(docId);
-
-    if (!saved) {
-      shouldLockRootMaterialOnReady = true;
-      if (isReady) {
-        await applyRootMaterialLockIfNeeded();
-      }
-    }
-
-    postToEditor({
-      source: HOST_SOURCE,
-      type: 'tsl:response:load',
-      requestId: msg.requestId,
-      payload: saved ? { graphData: saved, projectName: `Material ${docId}` } : null,
-    });
-    return;
-  }
-
-  if (msg.type === 'tsl:request:save') {
-    const docId = msg.payload?.ref?.docId ?? selectedMaterialId;
-    saveGraphToStorage(docId, msg.payload?.graphData ?? null);
-
-    postToEditor({
-      source: HOST_SOURCE,
-      type: 'tsl:response:save',
-      requestId: msg.requestId,
-      payload: { ok: true },
-    });
-  }
 });
+
+
+const applyMaterialBtn = document.getElementById("apply-material");
+applyMaterialBtn?.addEventListener("click", () => {
+  applyRootMaterialLock()
+})
