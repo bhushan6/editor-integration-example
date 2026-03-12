@@ -8,6 +8,7 @@ This document defines the iframe integration contract between a host app (for ex
 - Direction: Host <-> Editor iframe
 - Current command surface:
   - `tsl:command:load`
+  - `tsl:command:clear-graph`
   - `tsl:command:set-root-material`
   - `tsl:command:get-graph`
   - `tsl:command:get-code`
@@ -87,6 +88,10 @@ type Envelope<T = unknown> = {
 }
 ```
 
+2. `tsl:command:clear-graph`
+- Purpose: Host-driven graph reset (clears current graph in editor).
+- Payload: none.
+
 2. `tsl:command:set-root-material`
 - Purpose: Set and lock the root material node type.
 - Payload:
@@ -141,7 +146,15 @@ Note:
 }
 ```
 
-2. `tsl:response:set-root-material`
+2. `tsl:response:clear-graph`
+
+```ts
+{
+  ok: true;
+}
+```
+
+3. `tsl:response:set-root-material`
 
 ```ts
 {
@@ -150,7 +163,7 @@ Note:
 }
 ```
 
-3. `tsl:response:get-graph`
+4. `tsl:response:get-graph`
 
 ```ts
 {
@@ -158,7 +171,7 @@ Note:
 }
 ```
 
-4. `tsl:response:get-code`
+5. `tsl:response:get-code`
 
 ```ts
 {
@@ -187,7 +200,7 @@ Note:
   - each value is the uniform reference
 - Post-processing code remains separate in `postprocessing.code`.
 
-5. `tsl:response:get-uniform-schema`
+6. `tsl:response:get-uniform-schema`
 
 ```ts
 {
@@ -201,7 +214,7 @@ Note:
 }
 ```
 
-6. `tsl:response:set-uniform-values`
+7. `tsl:response:set-uniform-values`
 
 ```ts
 {

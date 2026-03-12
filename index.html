@@ -10,9 +10,16 @@
 
 <body>
   <iframe id="tsl-graph-frame" style="width:100%;height:600px;border:1px solid #ccc;"></iframe>
+  <button id="apply-basic-material">Apply Basic material</button>
+  <button id="apply-standard-material">Apply Standard material</button>
+  <button id="apply-physical-material">Apply Physical material</button>
+  <button id="apply-phong-material">Apply Phong material</button>
+  <button id="apply-sprite-material">Apply Sprite material</button>
+  <button id="clear-graph">Clear graph</button>
   <pre id="code"></pre>
   <div id="uniforms"></div>
-  <button id="apply-material">Apply material</button>
+
+  <input type="file" id="json-input" accept=".json" />
   <script type="module" src="/src/main.ts"></script>
 </body>
 

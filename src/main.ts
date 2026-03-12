@@ -48,6 +48,7 @@ type UniformSchemaEntry = {
 
 type LoadCommandPayload = { graphData: unknown };
 type LoadResponsePayload = { ok: true };
+type ClearGraphResponsePayload = { ok: true };
 
 type SetRootMaterialPayload = { materialType: MaterialType };
 type SetRootMaterialResponsePayload = { ok: true; materialType: MaterialType };
@@ -89,6 +90,7 @@ type EditorMessage =
   | (Envelope<EditorGraphChangedPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:event:graph-changed' })
   | (Envelope<UniformsChangedPayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:event:uniforms-changed' })
   | (Envelope<LoadResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:load' })
+  | (Envelope<ClearGraphResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:clear-graph' })
   | (Envelope<GetGraphResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:get-graph' })
   | (Envelope<GetCodeResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:get-code' })
   | (Envelope<SetRootMaterialResponsePayload> & { source: typeof EDITOR_SOURCE; type: 'tsl:response:set-root-material' })
@@ -97,6 +99,7 @@ type EditorMessage =
 
 type HostMessage =
   | (Envelope<LoadCommandPayload> & { source: typeof HOST_SOURCE; type: 'tsl:command:load'; requestId: string })
+  | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:clear-graph'; requestId: string })
   | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-graph'; requestId: string })
   | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-code'; requestId: string })
   | (Envelope<undefined> & { source: typeof HOST_SOURCE; type: 'tsl:command:get-uniform-schema'; requestId: string })
@@ -113,6 +116,7 @@ type HostMessage =
 
 type HostCommandType =
   | 'tsl:command:load'
+  | 'tsl:command:clear-graph'
   | 'tsl:command:get-graph'
   | 'tsl:command:get-code'
   | 'tsl:command:set-root-material'
@@ -121,6 +125,7 @@ type HostCommandType =
 
 type EditorResponseType =
   | 'tsl:response:load'
+  | 'tsl:response:clear-graph'
   | 'tsl:response:get-graph'
   | 'tsl:response:get-code'
   | 'tsl:response:set-root-material'
@@ -129,6 +134,7 @@ type EditorResponseType =
 
 const RESPONSE_BY_COMMAND: Record<HostCommandType, EditorResponseType> = {
   'tsl:command:load': 'tsl:response:load',
+  'tsl:command:clear-graph': 'tsl:response:clear-graph',
   'tsl:command:get-graph': 'tsl:response:get-graph',
   'tsl:command:get-code': 'tsl:response:get-code',
   'tsl:command:set-root-material': 'tsl:response:set-root-material',
@@ -187,11 +193,16 @@ function saveGraphToStorage(docId: string, graphData: unknown): void {
   window.localStorage.setItem(storageKeyForDoc(docId), JSON.stringify(graphData));
 }
 
+function clearGraphInStorage(docId: string): void {
+  window.localStorage.removeItem(storageKeyForDoc(docId));
+}
+
 function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function postToEditor(message: HostMessage) {
+  console.log('[TSL_MESSAGE] OUT:', message.type, message);
   iframe.contentWindow?.postMessage(message, editorOrigin);
 }
 
@@ -265,6 +276,7 @@ function uniformKey(u: Pick<UniformSchemaEntry, 'scope' | 'id'>): string {
 let uniformsCache = new Map<string, UniformSchemaEntry>();
 
 async function command(type: 'tsl:command:load', payload: LoadCommandPayload): Promise<LoadResponsePayload>;
+async function command(type: 'tsl:command:clear-graph'): Promise<ClearGraphResponsePayload>;
 async function command(type: 'tsl:command:get-graph'): Promise<GetGraphResponsePayload>;
 async function command(type: 'tsl:command:get-code'): Promise<GetCodeResponsePayload>;
 async function command(type: 'tsl:command:get-uniform-schema'): Promise<GetUniformSchemaResponsePayload>;
@@ -276,7 +288,6 @@ async function command(
   type: 'tsl:command:set-uniform-values',
   payload: SetUniformValuesPayload
 ): Promise<SetUniformValuesResponsePayload>;
-
 async function command(type: HostCommandType, payload?: unknown): Promise<unknown> {
   await editorReady;
   const requestId = makeRequestId();
@@ -295,6 +306,9 @@ async function command(type: HostCommandType, payload?: unknown): Promise<unknow
     switch (type) {
       case 'tsl:command:load':
         message = { source: HOST_SOURCE, type, requestId, payload: payload as LoadCommandPayload };
+        break;
+      case 'tsl:command:clear-graph':
+        message = { source: HOST_SOURCE, type, requestId };
         break;
       case 'tsl:command:set-root-material':
         message = { source: HOST_SOURCE, type, requestId, payload: payload as SetRootMaterialPayload };
@@ -315,6 +329,13 @@ async function command(type: HostCommandType, payload?: unknown): Promise<unknow
 
 async function commandLoad(payload: LoadCommandPayload): Promise<LoadResponsePayload> {
   return command('tsl:command:load', payload);
+}
+
+async function clearGraph(): Promise<ClearGraphResponsePayload> {
+  const response = await command('tsl:command:clear-graph');
+  // if you want to clear the graph from storage as well
+  // clearGraphInStorage(selectedMaterialId);
+  return response as ClearGraphResponsePayload;
 }
 
 async function getGraph(): Promise<GetGraphResponsePayload> {
@@ -343,10 +364,10 @@ function updateUniformCache(uniforms: UniformSchemaEntry[]) {
   uniformsCache = new Map(uniforms.map((u) => [uniformKey(u), u]));
 }
 
-async function applyRootMaterialLock() {
+async function applyRootMaterialLock(materialClass: MaterialClass) {
   try {
-    await commandSetRootMaterial({ materialType: materialClassToType(selectedMaterialClass) });
-    console.log('Root material locked:', selectedMaterialClass);
+    await commandSetRootMaterial({ materialType: materialClassToType(materialClass) });
+    console.log('Root material locked:', materialClass);
   } catch (err) {
     console.error('Failed to set root material:', err);
   }
@@ -493,6 +514,7 @@ window.addEventListener('message', async (event: MessageEvent) => {
   if (!isEditorMessage(event.data)) return;
 
   const msg = event.data;
+  console.log('[TSL_MESSAGE] IN:', msg.type, msg);
 
   if (msg.requestId && msg.type.startsWith('tsl:response:')) {
     const waiter = pending.get(msg.requestId);
@@ -519,11 +541,9 @@ window.addEventListener('message', async (event: MessageEvent) => {
       if (saved !== null) {
         await commandLoad({ graphData: saved });
         console.log('Loaded graph from localStorage:', selectedMaterialId);
-      } else {
-        // await applyRootMaterialLock();
       }
     } catch (err) {
-      console.error('Initial load/lock failed:', err);
+      console.error('Initial load failed:', err);
     }
 
     try {
@@ -555,8 +575,51 @@ window.addEventListener('message', async (event: MessageEvent) => {
   }
 });
 
+const applyBasicMaterialBtn = document.getElementById('apply-basic-material');
+applyBasicMaterialBtn?.addEventListener('click', () => {
+  applyRootMaterialLock('MeshBasicNodeMaterial');
+});
 
-const applyMaterialBtn = document.getElementById("apply-material");
-applyMaterialBtn?.addEventListener("click", () => {
-  applyRootMaterialLock()
-})
+const applyStandardMaterialBtn = document.getElementById('apply-standard-material');
+applyStandardMaterialBtn?.addEventListener('click', () => {
+  applyRootMaterialLock('MeshStandardNodeMaterial');
+});
+
+const applyPhysicalMaterialBtn = document.getElementById('apply-physical-material');
+applyPhysicalMaterialBtn?.addEventListener('click', () => {
+  applyRootMaterialLock('MeshPhysicalNodeMaterial');
+});
+
+const applyPhongMaterialBtn = document.getElementById('apply-phong-material');
+applyPhongMaterialBtn?.addEventListener('click', () => {
+  applyRootMaterialLock('MeshPhongNodeMaterial');
+});
+
+const applySpriteMaterialBtn = document.getElementById('apply-sprite-material');
+applySpriteMaterialBtn?.addEventListener('click', () => {
+  applyRootMaterialLock('SpriteNodeMaterial');
+});
+
+const jsonInput = document.getElementById('json-input');
+jsonInput?.addEventListener('change', () => {
+  const file = jsonInput?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const json = JSON.parse(e.target?.result as string);
+    commandLoad({ graphData: json });
+  };
+  reader.readAsText(file);
+});
+
+const clearGraphBtn = document.getElementById('clear-graph');
+clearGraphBtn?.addEventListener('click', async () => {
+  try {
+    await clearGraph();
+    console.log('Graph cleared');
+    await refreshCodePanel();
+    renderUniformUI([]);
+  } catch (err) {
+    console.error('Failed to clear graph:', err);
+  }
+});
